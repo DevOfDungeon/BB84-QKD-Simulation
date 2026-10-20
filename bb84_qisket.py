@@ -1,8 +1,8 @@
 import random
 from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
+from qiskit.providers.basic_provider import BasicSimulator
 
-sim = AerSimulator()
+sim = BasicSimulator()
 
 def encode(bit, basis):
     qc = QuantumCircuit(1, 1)
