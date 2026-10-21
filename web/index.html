@@ -147,6 +147,19 @@
   .reasons p:last-child { border-right: 0; }
   @media (max-width: 760px) { .reasons { grid-template-columns: 1fr; } .reasons p { border-right: 0; border-bottom: var(--line) solid var(--ink); } .reasons p:last-child { border-bottom: 0; } }
 
+  /* message */
+  input[type=text] { font: 600 1.05rem var(--mono); padding: 11px 12px; border: 3px solid var(--ink); background: var(--paper); color: var(--ink); width: min(100%, 380px); }
+  .msgout { margin-top: 18px; display: grid; gap: 0; border: 3px solid var(--ink); background: var(--panel); }
+  .msgout:empty { display: none; }
+  .mrow { display: grid; grid-template-columns: 170px 1fr; border-bottom: 3px solid var(--ink); }
+  .mrow:last-child { border-bottom: 0; }
+  .mrow > b { font: 800 0.98rem/1.3 var(--display); font-stretch: 105%; padding: 10px 12px; border-right: 3px solid var(--ink); background: var(--paper); }
+  .mrow > div { padding: 10px 12px; font-family: var(--mono); font-size: 0.92rem; word-break: break-word; }
+  .mrow mark { background: var(--eve); color: var(--ink); font-weight: 900; padding: 0 1px; }
+  .mrow .big { font: 800 1.5rem/1.2 var(--display); font-stretch: 108%; }
+  .mrow .note { font-family: var(--serif); font-size: 0.98rem; color: var(--mute); margin-top: 4px; }
+  @media (max-width: 640px) { .mrow { grid-template-columns: 1fr; } .mrow > b { border-right: 0; border-bottom: 3px solid var(--ink); } }
+
   footer { border-top: 8px solid var(--ink); padding: 26px 0 120px; color: var(--mute); font-size: 0.95rem; }
 </style>
 </head>
@@ -233,6 +246,24 @@
       <div class="scroll"><table id="table"></table></div>
       <p class="legend">Polarization symbols: basis <code>+</code> uses <code>─</code> for 0 and <code>│</code> for 1. Basis <code>×</code> uses <code>╱</code> for 0 and <code>╲</code> for 1.</p>
       <div class="stats" id="stats"></div>
+    </div>
+  </section>
+
+  <section class="block" id="message">
+    <h2>Send a message</h2>
+    <div class="panel">
+      <p style="margin-top:0">BB84 does not carry your text through the photons. It creates a shared random key, and that key locks the message with XOR. The locked message then travels openly, and only someone with the same key can unlock it.</p>
+      <div class="controls">
+        <label for="msg">Message
+          <input id="msg" type="text" maxlength="32" value="Hello Bob" autocomplete="off">
+        </label>
+        <label for="meve"><input id="meve" type="checkbox"> Eve intercepts</label>
+        <label for="mforce"><input id="mforce" type="checkbox"> Send even if the alarm goes off</label>
+      </div>
+      <div class="controls" style="margin-top:16px">
+        <button id="send" class="primary">Encrypt and send</button>
+      </div>
+      <div class="msgout" id="msgout" aria-live="polite"></div>
     </div>
   </section>
 
@@ -378,6 +409,67 @@ document.getElementById("next").addEventListener("click", () => { if (state.stag
 document.getElementById("all").addEventListener("click", () => { state.stage = 5; render(); });
 document.getElementById("big").addEventListener("click", bigRun);
 newRun();
+
+/* ---------- custom message over BB84 (key exchange + one-time pad) ---------- */
+const textToBits = s => [...new TextEncoder().encode(s)]
+  .flatMap(b => b.toString(2).padStart(8, "0").split("").map(Number));
+const bitsToText = bits => {
+  const bytes = [];
+  for (let i = 0; i + 7 < bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8).join(""), 2));
+  return new TextDecoder().decode(new Uint8Array(bytes));
+};
+const esc = s => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtBits = (bits, ref) => bits.map((b, i) =>
+  (i && i % 8 === 0 ? " " : "") + (ref && ref[i] !== b ? `<mark>${b}</mark>` : b)).join("");
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const mrow = (k, v) => `<div class="mrow"><b>${k}</b><div>${v}</div></div>`;
+
+function sendMessage() {
+  const out = document.getElementById("msgout");
+  const msg = document.getElementById("msg").value;
+  if (!msg) { out.innerHTML = mrow("Nothing to send", "Type a message first."); return; }
+  const eve = document.getElementById("meve").checked;
+  const force = document.getElementById("mforce").checked;
+
+  const bits = textToBits(msg);
+  const testN = Math.max(40, Math.ceil(bits.length * 0.25));  // sifted bits sacrificed for the error check
+  const need = bits.length + testN;
+
+  // send enough photons that the sifted key (about half) covers message + test sample
+  let N = Math.ceil(need * 2.4), run;
+  do { run = simulate(N, eve); N = Math.ceil(N * 1.3); } while (run.keep.length < need);
+
+  const pos = shuffle(run.keep.slice());
+  const testPos = pos.slice(0, testN);
+  const keyPos = pos.slice(testN).sort((a, b) => a - b).slice(0, bits.length);
+  const testErrors = testPos.filter(i => run.aBits[i] !== run.bBits[i]).length;
+  const qber = testErrors / testN;
+  const alarm = qber > THRESHOLD;
+
+  let html = mrow("Your message", `<span class="big">${esc(msg)}</span><div class="note">${bits.length} bits (8 per character)</div>`);
+  html += mrow("As bits", fmtBits(bits));
+  html += mrow("BB84 key exchange", `${run.n} photons sent, ${run.keep.length} kept after sifting.<br>${testN} of those compared in public to check for Eve: <strong>${(qber * 100).toFixed(1)}% errors</strong>${eve ? " (Eve is listening)" : ""}.`);
+
+  if (alarm && !force) {
+    html += mrow("Verdict", `<span class="big verdict-bad">Alarm: key discarded</span><div class="note">The error rate is above ${THRESHOLD * 100}%, so Alice refuses to send anything. Tick "Send even if the alarm goes off" to see what would have happened.</div>`);
+    out.innerHTML = html;
+    return;
+  }
+
+  const aKey = keyPos.map(i => run.aBits[i]);
+  const bKey = keyPos.map(i => run.bBits[i]);
+  const cipher = bits.map((b, i) => b ^ aKey[i]);       // Alice locks the message
+  const bobBits = cipher.map((c, i) => c ^ bKey[i]);    // Bob unlocks with his key
+  const bobText = bitsToText(bobBits);
+  const wrong = bobBits.filter((b, i) => b !== bits[i]).length;
+
+  html += mrow("Alice's key", fmtBits(aKey));
+  html += mrow("Locked message (sent openly)", fmtBits(cipher));
+  html += mrow("Bob's key", fmtBits(bKey, aKey) + `<div class="note">Red bits differ from Alice's key.</div>`);
+  html += mrow("Bob unlocks", `<span class="big ${wrong ? "verdict-bad" : "verdict-ok"}">${esc(bobText)}</span><div class="note">${wrong ? `${wrong} of ${bits.length} bits came out wrong, so the text is garbled.` : "Every bit matches. Bob read the message exactly."}</div>`);
+  out.innerHTML = html;
+}
+document.getElementById("send").addEventListener("click", sendMessage);
 
 /* ---------- scroll-driven orbiting photon ---------- */
 const orbit = { rx: 78, ry: 30, tilt: -24 * Math.PI / 180, cx: 100, cy: 100 };
