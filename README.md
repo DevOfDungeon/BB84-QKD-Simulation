@@ -35,7 +35,7 @@ BB84-QKD-Simulation/
 ├── bb84_qisket.py      # Qiskit BB84
 ├── index.html          # Interactive web demo
 ├── requirements.txt
-└── docs/               # Study notes (PDF), slides, screenshots
+└── docs/              screenshots
 ```
 
 ## Getting started
