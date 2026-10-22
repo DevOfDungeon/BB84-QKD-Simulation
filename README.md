@@ -43,7 +43,7 @@ BB84-QKD-Simulation/
 Requires Python 3.10 or newer.
 
 ```bash
-git clone https://github.com/<your-username>/BB84-QKD-Simulation.git
+git clone https://github.com/DevOfDungeon/BB84-QKD-Simulation/
 cd BB84-QKD-Simulation
 
 python3 -m venv env
